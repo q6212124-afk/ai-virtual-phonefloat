@@ -242,17 +242,26 @@ export function dbReplaceContacts(contacts: ChatContact[]): void {
 
 // 在应用启动时调用，自动拉取云端数据
 export async function initSync() {
-  // 如果本次会话已经同步过了，就不要重复刷新了，避免死循环
+  // 改用 localStorage 加上时间戳，10 秒内只同步一次，防止无限刷新
+  if (typeof window !== 'undefined') {
+    const lastSync = localStorage.getItem('last_sync_time');
+    const now = Date.now();
+    if (lastSync && now - parseInt(lastSync) < 10000) {
+      console.log('10秒内已同步过，跳过本次同步，防止死循环');
+      return; 
+    }
+    localStorage.setItem('last_sync_time', now.toString());
+  }
 
-  
   console.log('正在从云端同步数据...');
   const hasCloudData = await pullFromSupabase();
   
   if (hasCloudData) {
     if (typeof window !== 'undefined') {
-      sessionStorage.setItem('cloud_synced', 'true');
       console.log('数据已同步，正在刷新页面...');
       window.location.reload(); 
     }
+  }
+}
   }
 }
