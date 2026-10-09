@@ -1,3 +1,43 @@
+import { createClient } from '@supabase/supabase-js';
+
+// ⚠️ 务必替换成你 Supabase 里的真实数据！
+const supabaseUrl = 'https://oxgdulqlecnurvxyxejx.supabase.co';
+const supabaseKey = 'sb_publishable_tdP32zYlpPxDj3utaOP-Sg_JMvG4-Em';
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// 推送数据到 Supabase（后台自动上传）
+async function pushToSupabase(sessions: any[]) {
+  if (!sessions || sessions.length === 0) return;
+  try {
+    const payload = sessions.map(s => ({
+      id: s.id,
+      data: s,
+      updated_at: new Date().toISOString()
+    }));
+    await supabase.from('chat_sync').upsert(payload);
+    console.log('✅ 数据已同步到云端');
+  } catch (err) {
+    console.warn('❌ 云端同步失败:', err);
+  }
+}
+
+// 从 Supabase 拉取数据（用来把手机上的数据同步到电脑）
+export async function pullFromSupabase() {
+  try {
+    const { data, error } = await supabase.from('chat_sync').select('*');
+    if (error) throw error;
+    if (data && data.length > 0) {
+      const sessions = data.map(item => item.data);
+      await chatDb.sessions.bulkPut(sessions);
+      console.log('✅ 云端数据已拉取到本地');
+      return true;
+    }
+  } catch (err) {
+    console.warn('❌ 云端拉取失败:', err);
+  }
+  return false;
+}
+
 // lib/chat-db.ts
 // IndexedDB persistence layer for chat data using Dexie.js.
 // Provides async persistence behind the synchronous in-memory cache in chat-storage.ts.
@@ -168,14 +208,16 @@ export function dbPutSession(session: ChatSession): void {
 }
 
 export function dbPutSessions(sessions: ChatSession[]): void {
-    chatDb.sessions.bulkPut(sessions).catch(err => console.warn("[ChatDB] bulkPut sessions failed:", err));
+  chatDb.sessions.bulkPut(sessions).catch(err => console.warn("[ChatDB] bulkPut sessions failed:", err));
+  pushToSupabase(sessions); // 👈 新增这一行，让数据自动上传到云端
 }
 
 export function dbReplaceSessions(sessions: ChatSession[]): void {
-    chatDb.transaction("rw", chatDb.sessions, async () => {
-        await chatDb.sessions.clear();
-        await chatDb.sessions.bulkPut(sessions);
-    }).catch(err => console.warn("[ChatDB] replace sessions failed:", err));
+  chatDb.transaction("rw", chatDb.sessions, async () => {
+    await chatDb.sessions.clear();
+    await chatDb.sessions.bulkPut(sessions);
+  }).catch(err => console.warn("[ChatDB] replace sessions failed:", err));
+  pushToSupabase(sessions); // 👈 新增这一行，让数据自动上传到云端
 }
 
 export function dbDeleteSession(id: string): void {
@@ -195,4 +237,14 @@ export function dbReplaceContacts(contacts: ChatContact[]): void {
         await chatDb.contacts.clear();
         await chatDb.contacts.bulkPut(contacts);
     }).catch(err => console.warn("[ChatDB] replaceContacts failed:", err));
+}
+
+// 在应用启动时调用，自动拉取云端数据
+export async function initSync() {
+  console.log('正在从云端同步数据...');
+  const hasCloudData = await pullFromSupabase();
+  if (hasCloudData) {
+    console.log('数据已同步，正在刷新页面...');
+    window.location.reload(); 
+  }
 }
