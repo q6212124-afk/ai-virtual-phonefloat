@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { initSync } from '@/lib/chat-db';
 
-import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Loader2, LogIn } from "lucide-react";
 
 import { AccountProvider } from "@/lib/account-context";
