@@ -241,10 +241,17 @@ export function dbReplaceContacts(contacts: ChatContact[]): void {
 
 // 在应用启动时调用，自动拉取云端数据
 export async function initSync() {
+  // 如果本次会话已经同步过了，就不要重复刷新了，避免死循环
+  if (typeof window !== 'undefined' && sessionStorage.getItem('cloud_synced')) return;
+  
   console.log('正在从云端同步数据...');
   const hasCloudData = await pullFromSupabase();
+  
   if (hasCloudData) {
-    console.log('数据已同步，正在刷新页面...');
-    window.location.reload(); 
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('cloud_synced', 'true');
+      console.log('数据已同步，正在刷新页面...');
+      window.location.reload(); 
+    }
   }
 }
