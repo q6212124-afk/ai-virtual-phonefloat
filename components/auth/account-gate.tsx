@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react';
+import { initSync } from '@/lib/chat-db';
+
 "use client";
 
 import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
@@ -40,6 +43,10 @@ const gatePanelFallbackStyle: CSSProperties = {
 };
 
 export function AccountGate({ children }: AccountGateProps) {
+  // 应用加载时，立刻去云端拉取数据
+useEffect(() => {
+  initSync();
+}, []);
   const selfHostedMode = true
   const [status, setStatus] = useState<GateStatus>(selfHostedMode ? "ready" : "checking");
   const [account, setAccount] = useState<AccountProfile | null>(selfHostedMode ? SELF_HOSTED_ACCOUNT : null);
