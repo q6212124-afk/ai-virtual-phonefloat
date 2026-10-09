@@ -26,6 +26,7 @@
     "@react-three/fiber": "^9.5.0",
     "@react-three/postprocessing": "^3.0.4",
     "@supabase/realtime-js": "^2.110.7",
+    "@supabase/supabase-js": "^2.39.0",
     "@types/three": "^0.183.1",
     "@types/web-push": "^3.6.4",
     "d3-delaunay": "^6.0.4",
