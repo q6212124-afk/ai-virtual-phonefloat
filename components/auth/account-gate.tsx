@@ -40,7 +40,7 @@ const gatePanelFallbackStyle: CSSProperties = {
 };
 
 export function AccountGate({ children }: AccountGateProps) {
-  const selfHostedMode = isSelfHostedModeEnabled();
+  const selfHostedMode = true
   const [status, setStatus] = useState<GateStatus>(selfHostedMode ? "ready" : "checking");
   const [account, setAccount] = useState<AccountProfile | null>(selfHostedMode ? SELF_HOSTED_ACCOUNT : null);
   const [username, setUsername] = useState("");
