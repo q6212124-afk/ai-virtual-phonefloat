@@ -28,6 +28,7 @@ export async function pullFromSupabase() {
     if (error) throw error;
     if (data && data.length > 0) {
       const sessions = data.map(item => item.data);
+      await chatDb.sessions.clear();
       await chatDb.sessions.bulkPut(sessions);
       console.log('✅ 云端数据已拉取到本地');
       return true;
