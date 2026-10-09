@@ -263,5 +263,3 @@ export async function initSync() {
     }
   }
 }
-  }
-}
