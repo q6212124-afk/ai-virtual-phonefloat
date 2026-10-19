@@ -136,7 +136,14 @@ export function getStoryRenderSignature(characterId: string): { regexSignature: 
 export async function generateStoryCompletion(
   characterId: string,
   history: StoryMessage[],
-  options?: { sessionFoldTags?: string; sessionContextExcludedTags?: string; signal?: AbortSignal; characterIds?: string[] },
+  options?: {
+    sessionFoldTags?: string;
+    sessionContextExcludedTags?: string;
+    signal?: AbortSignal;
+    characterIds?: string[];
+    minWordCount?: number;
+    maxWordCount?: number;
+  },
 ): Promise<StoryGenerationResult> {
   const character = loadCharacters().find((item) => item.id === characterId);
   if (!character) {
@@ -146,7 +153,17 @@ export async function generateStoryCompletion(
   const { apiConfig, preset, regexes, worldBooks, regexSignature, summaryTag } = resolveStoryConfigs(characterId);
   const effectiveFoldTags = options?.sessionFoldTags?.trim() || DEFAULT_STORY_FOLD_TAGS;
   const effectiveContextExcludedTags = options?.sessionContextExcludedTags?.trim() || DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS;
-  const llmMessages = await buildStoryPromptMessages(characterId, history, preset, regexes, worldBooks, effectiveContextExcludedTags, options?.characterIds);
+  const llmMessages = await buildStoryPromptMessages(
+    characterId,
+    history,
+    preset,
+    regexes,
+    worldBooks,
+    effectiveContextExcludedTags,
+    options?.characterIds,
+    options?.minWordCount,
+    options?.maxWordCount,
+  );
 
   const userIdentity = resolveUserIdentity(characterId, "story");
   const macroEngine = new MacroEngine(character.name, userIdentity?.name ?? "用户");
@@ -181,6 +198,8 @@ async function buildStoryPromptMessages(
   worldBooks: WorldBookConfig[],
   contextExcludedTags: string = DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS,
   characterIds?: string[],
+  minWordCount?: number,
+  maxWordCount?: number,
 ): Promise<LLMMessage[]> {
   const allCharacters = loadCharacters();
   const character = allCharacters.find((item) => item.id === characterId);
@@ -191,6 +210,10 @@ async function buildStoryPromptMessages(
   // 多角色支持：如果指定了多个角色，组合各角色人设
   const targetIds = characterIds && characterIds.length > 0 ? Array.from(new Set(characterIds)) : [characterId];
   let effectiveCharacter = character;
+  const singleLengthInstruction = (minWordCount || maxWordCount)
+    ? `\n\n【剧情字数要求】\n本次剧情推进正文字数：${minWordCount ? `不少于 ${minWordCount} 字` : ""}${minWordCount && maxWordCount ? "，" : ""}${maxWordCount ? `不超过 ${maxWordCount} 字` : ""}。请严格遵守该字数范围，避免拖沓，确保有完整的正文叙述。`
+    : "";
+
   if (targetIds.length > 1) {
     const castChars = allCharacters.filter((c) => targetIds.includes(c.id));
     const castPromptText = castChars.map((c) => {
@@ -201,14 +224,23 @@ async function buildStoryPromptMessages(
       return parts.join("\n");
     }).join("\n\n---\n\n");
 
+    const lengthInstruction = (minWordCount || maxWordCount)
+      ? `\n5. 字数控制：本次剧情推进正文字数要求：${minWordCount ? `不少于 ${minWordCount} 字` : ""}${minWordCount && maxWordCount ? "，" : ""}${maxWordCount ? `不超过 ${maxWordCount} 字` : ""}。请严格遵守字数范围，避免拖沓或过早收尾。`
+      : "";
+
     const multiPrompt = [
       character.prompt || "",
-      `\n\n====================\n【多人互动剧情设定：线下同框场景】\n当前场景为真实物理空间内的同框剧情。\n在场所有人：【用户】以及以下列出的所有角色。\n\n${castPromptText}\n\n【角色表现与互动规则】：\n1. 空间感知：所有角色处于同一场景下，能彼此看见视线、肢体小动作，听见对方的言行举止。\n2. 性格反差与独立反应：面对相同的事件或用户的举动，各角色必须依据自身人设产生截然不同的反应。不得混淆各角色的立场、性格与说话语气。\n3. 角色间交互：角色不仅与用户互动，各角色之间也会互相注意、搭话、暗中观察或产生冲突/默契。\n4. 排版规范：采用沉浸式小说/对话体进行描写，清晰展现是谁在说话和行动（例如：角色名：台词 / （动作描写）），严禁将内容留白，必须输出详实的剧情正文与对白。\n====================\n`
+      `\n\n====================\n【多人互动剧情设定：线下同框场景】\n当前场景为真实物理空间内的同框剧情。\n在场所有人：【用户】以及以下列出的所有角色。\n\n${castPromptText}\n\n【角色表现与互动规则】：\n1. 空间感知：所有角色处于同一场景下，能彼此看见视线、肢体小动作，听见对方的言行举止。\n2. 性格反差与独立反应：面对相同的事件或用户的举动，各角色必须依据自身人设产生截然不同的反应。不得混淆各角色的立场、性格与说话语气。\n3. 角色间交互：角色不仅与用户互动，各角色之间也会互相注意、搭话、暗中观察或产生冲突/默契。\n4. 排版规范：采用沉浸式小说/对话体进行描写，清晰展现是谁在说话和行动（例如：角色名：台词 / （动作描写）），严禁只输出思考过程，必须输出完整的剧情正文与对白。${lengthInstruction}\n====================\n`
     ].join("");
 
     effectiveCharacter = {
       ...character,
       prompt: multiPrompt,
+    };
+  } else if (singleLengthInstruction) {
+    effectiveCharacter = {
+      ...character,
+      prompt: (character.prompt || "") + singleLengthInstruction,
     };
   }
 

@@ -12,6 +12,8 @@ export type StorySession = {
   id: string;
   characterId: string;
   characterIds?: string[];      // Multiple participating characters for group story
+  minWordCount?: number;        // Minimum character count for story generation
+  maxWordCount?: number;        // Maximum character count for story generation
   title?: string;
   updatedAt: string;
   customCSS?: string;

@@ -282,6 +282,9 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [customCssDraft, setCustomCssDraft] = useState("");
   const [foldTagsDraft, setFoldTagsDraft] = useState("");
   const [contextExcludedTagsDraft, setContextExcludedTagsDraft] = useState("");
+  const [minWordDraft, setMinWordDraft] = useState<string>("");
+  const [maxWordDraft, setMaxWordDraft] = useState<string>("");
+  const [castPickerOpen, setCastPickerOpen] = useState(false);
   // 生成状态按会话记录：避免在 A 会话生成时切到 B 会话也显示"正在生成"
   const [generatingSessionIds, setGeneratingSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   // 抽屉滑动手势用 ref 而不是 state：手指按住时 touchmove 每帧都在触发，
@@ -354,6 +357,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
         setCustomCssDraft(session.customCSS || "");
         setFoldTagsDraft(session.foldTags ?? "think,thinking");
         setContextExcludedTagsDraft(session.contextExcludedTags ?? "think,thinking");
+        setMinWordDraft(session.minWordCount !== undefined ? String(session.minWordCount) : "");
+        setMaxWordDraft(session.maxWordCount !== undefined ? String(session.maxWordCount) : "");
         setStorageVersion((value) => value + 1);
       }
       setReady(true);
@@ -370,6 +375,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
     setCustomCssDraft(session.customCSS || "");
     setFoldTagsDraft(session.foldTags ?? "think,thinking");
     setContextExcludedTagsDraft(session.contextExcludedTags ?? "think,thinking");
+    setMinWordDraft(session.minWordCount !== undefined ? String(session.minWordCount) : "");
+    setMaxWordDraft(session.maxWordCount !== undefined ? String(session.maxWordCount) : "");
     setStorageVersion((value) => value + 1);
   }, [activeCharacterId]);
 
@@ -605,6 +612,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
     setCustomCssDraft(next.customCSS || "");
     setFoldTagsDraft(next.foldTags ?? "think,thinking");
     setContextExcludedTagsDraft(next.contextExcludedTags ?? "think,thinking");
+    setMinWordDraft(next.minWordCount !== undefined ? String(next.minWordCount) : "");
+    setMaxWordDraft(next.maxWordCount !== undefined ? String(next.maxWordCount) : "");
     setStorageVersion((value) => value + 1);
   }
 
@@ -636,6 +645,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
         sessionFoldTags: currentSession?.foldTags,
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
         characterIds: participatingIds,
+        minWordCount: currentSession?.minWordCount,
+        maxWordCount: currentSession?.maxWordCount,
         signal: generationRun.controller.signal,
       });
       if (!isCurrentGeneration()) return;
@@ -850,6 +861,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
         sessionFoldTags: currentSession?.foldTags,
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
         characterIds: participatingIds,
+        minWordCount: currentSession?.minWordCount,
+        maxWordCount: currentSession?.maxWordCount,
         signal: generationRun.controller.signal,
       });
       if (!isCurrentGeneration()) return;
@@ -973,48 +986,136 @@ export function StoryApp({ onClose }: StoryAppProps) {
         </div>
 
         <div className="story-drawer-section">
-          <div className="story-drawer-eyebrow">当前剧情登场角色（多选，共同推进剧情与记忆）</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
-            {characters.map((char) => {
-              const currentSelected = currentSession?.characterIds && currentSession.characterIds.length > 0
-                ? currentSession.characterIds
-                : [activeCharacterId];
-              const isChecked = currentSelected.includes(char.id);
-              return (
-                <label
-                  key={char.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "6px 8px",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    background: isChecked ? "var(--c-story-chip-bg-active, rgba(124, 104, 68, 0.12))" : "transparent",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    disabled={char.id === activeCharacterId}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? Array.from(new Set([...currentSelected, char.id]))
-                        : currentSelected.filter((id) => id !== char.id);
-                      applySessionUpdates({ characterIds: next });
-                    }}
-                    style={{ accentColor: "var(--c-story-primary, #7c6844)" }}
-                  />
-                  <Avatar src={char.avatar || undefined} name={char.name} size="sm" />
-                  <span style={{ fontSize: "calc(13px*var(--app-text-scale,1))", color: "var(--c-story-text, #4b4335)" }}>
-                    {char.name} {char.id === activeCharacterId ? "(主控)" : ""}
-                  </span>
-                </label>
-              );
-            })}
+          <div
+            className="story-drawer-eyebrow"
+            onClick={() => setCastPickerOpen((v) => !v)}
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
+          >
+            <span>登场角色（{currentSession?.characterIds?.length || 1} 人）</span>
+            <span style={{ fontSize: "11px", opacity: 0.7 }}>
+              {castPickerOpen ? "收起 ▲" : "展开选择 ▼"}
+            </span>
           </div>
+
+          {castPickerOpen ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, maxHeight: 220, overflowY: "auto", paddingRight: 4 }}>
+              {characters.map((char) => {
+                const currentSelected = currentSession?.characterIds && currentSession.characterIds.length > 0
+                  ? currentSession.characterIds
+                  : [activeCharacterId];
+                const isChecked = currentSelected.includes(char.id);
+                return (
+                  <label
+                    key={char.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      background: isChecked ? "var(--c-story-chip-bg-active, rgba(124, 104, 68, 0.12))" : "transparent",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      disabled={char.id === activeCharacterId}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? Array.from(new Set([...currentSelected, char.id]))
+                          : currentSelected.filter((id) => id !== char.id);
+                        applySessionUpdates({ characterIds: next });
+                      }}
+                      style={{ accentColor: "var(--c-story-primary, #7c6844)" }}
+                    />
+                    <Avatar src={char.avatar || undefined} name={char.name} size="sm" />
+                    <span style={{ fontSize: "calc(13px*var(--app-text-scale,1))", color: "var(--c-story-text, #4b4335)" }}>
+                      {char.name} {char.id === activeCharacterId ? "(主控)" : ""}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+              {(currentSession?.characterIds && currentSession.characterIds.length > 0 ? currentSession.characterIds : [activeCharacterId])
+                .map((id) => characters.find((c) => c.id === id)?.name)
+                .filter(Boolean)
+                .map((name) => (
+                  <span
+                    key={name}
+                    style={{
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      fontSize: "calc(12px*var(--app-text-scale,1))",
+                      background: "var(--c-story-chip-bg-active, rgba(124, 104, 68, 0.12))",
+                      color: "var(--c-story-text, #4b4335)",
+                    }}
+                  >
+                    {name}
+                  </span>
+                ))}
+            </div>
+          )}
           <div style={{ fontSize: "calc(11px*var(--app-text-scale,1))", marginTop: 6, color: "var(--c-story-sub, rgba(95, 82, 61, 0.72))" }}>
             选中的角色将共同作为本段剧情的主角，其人设会被一并引入，且剧情事件将同步进入各自的记忆库；删除文本时则不计入记忆。
+          </div>
+        </div>
+
+        <div className="story-drawer-section">
+          <div className="story-drawer-eyebrow">字数控制（单次剧情推进）</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: "var(--c-story-sub, rgba(95, 82, 61, 0.72))", display: "block", marginBottom: 3 }}>
+                最少字符
+              </label>
+              <input
+                type="number"
+                value={minWordDraft}
+                onChange={(e) => setMinWordDraft(e.target.value)}
+                onBlur={() => {
+                  const val = parseInt(minWordDraft.trim(), 10);
+                  applySessionUpdates({ minWordCount: Number.isFinite(val) && val > 0 ? val : undefined });
+                }}
+                placeholder="例如 300"
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  padding: "6px 8px", borderRadius: 0,
+                  border: "none", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.06)",
+                  background: "var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88))",
+                  color: "var(--c-story-text, #4b4335)",
+                  fontSize: "calc(13px*var(--app-text-scale,1))", fontFamily: "inherit",
+                }}
+              />
+            </div>
+            <span style={{ color: "var(--c-story-sub, rgba(95, 82, 61, 0.72))", marginTop: 16 }}>~</span>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "calc(11px*var(--app-text-scale,1))", color: "var(--c-story-sub, rgba(95, 82, 61, 0.72))", display: "block", marginBottom: 3 }}>
+                最多字符
+              </label>
+              <input
+                type="number"
+                value={maxWordDraft}
+                onChange={(e) => setMaxWordDraft(e.target.value)}
+                onBlur={() => {
+                  const val = parseInt(maxWordDraft.trim(), 10);
+                  applySessionUpdates({ maxWordCount: Number.isFinite(val) && val > 0 ? val : undefined });
+                }}
+                placeholder="例如 800"
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  padding: "6px 8px", borderRadius: 0,
+                  border: "none", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.06)",
+                  background: "var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88))",
+                  color: "var(--c-story-text, #4b4335)",
+                  fontSize: "calc(13px*var(--app-text-scale,1))", fontFamily: "inherit",
+                }}
+              />
+            </div>
+          </div>
+          <div style={{ fontSize: "calc(11px*var(--app-text-scale,1))", marginTop: 4, color: "var(--c-story-sub, rgba(95, 82, 61, 0.72))" }}>
+            留空则不限字数；设置后会强约束模型单次剧情篇幅，防止篇幅过长爆掉输出上限。
           </div>
         </div>
 
