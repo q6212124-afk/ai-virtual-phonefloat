@@ -1067,3 +1067,27 @@
         }
         .story-inline-edit-btn-save { color: var(--c-story-accent, #7c6844); font-weight: 500; }
         .story-inline-edit-btn:disabled { opacity: 0.4; cursor: default; }
+
+        /* 剧情模式中展示的聊天记录附件折叠框 */
+        .story-chat-attachment-box {
+          margin-top: 8px;
+          padding: 8px 12px;
+          border-radius: 8px;
+          background: rgba(0, 0, 0, 0.04);
+          border: 1px solid rgba(0, 0, 0, 0.06);
+          font-size: calc(12px * var(--app-text-scale, 1));
+          cursor: pointer;
+        }
+        .story-chat-attachment-box summary {
+          font-weight: 500;
+          color: var(--c-story-accent, #7c6844);
+          outline: none;
+        }
+        .story-chat-attachment-box pre {
+          margin-top: 6px;
+          white-space: pre-wrap;
+          word-break: break-word;
+          font-family: inherit;
+          color: var(--c-story-text, #3a3b3c);
+          opacity: 0.85;
+        }

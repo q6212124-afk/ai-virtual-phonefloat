@@ -64,6 +64,7 @@ import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { STORY_CSS_EXAMPLE } from "@/lib/css-examples";
 import { applyEditOutputRegex } from "@/lib/llm-prompt-assembler";
 import { MacroEngine } from "@/lib/macro-engine";
+import { StoryChatHistoryModal, type SelectedChatAttachment } from "./story-chat-history-modal";
 
 type StoryAppProps = {
   onClose: () => void;
@@ -198,16 +199,21 @@ const StoryComposer = memo(function StoryComposer({
   characterName,
   isGenerating,
   appendRequest,
+  chatAttachment,
+  onRemoveAttachment,
   onSend,
   onStop,
 }: {
   characterName: string;
   isGenerating: boolean;
   appendRequest: StoryComposerAppendRequest | null;
+  chatAttachment: SelectedChatAttachment | null;
+  onRemoveAttachment: () => void;
   onSend: (text: string) => void;
   onStop: () => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastAppendIdRef = useRef<number | null>(null);
 
@@ -239,7 +245,108 @@ const StoryComposer = memo(function StoryComposer({
   };
 
   return (
-    <div className="story-composer">
+    <div className="story-composer" style={{ position: "relative" }}>
+      {/* 依附在输入框上方的聊天记录附件 */}
+      {chatAttachment && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: "calc(100% + 6px)",
+            left: 14,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "4px 10px",
+            backgroundColor: "var(--c-story-panel, rgba(255, 255, 255, 0.95))",
+            border: "1px solid var(--c-story-border, rgba(0, 0, 0, 0.08))",
+            borderRadius: 16,
+            boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
+            fontSize: "calc(12px * var(--app-text-scale, 1))",
+            color: "var(--c-story-text, #3a3b3c)",
+            zIndex: 10,
+          }}
+        >
+          <span>聊天记录</span>
+          <button
+            onClick={() => setDeleteConfirmVisible(true)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "#999",
+              display: "flex",
+              alignItems: "center",
+              padding: 0,
+            }}
+            title="删除聊天记录展示"
+          >
+            <XMarkIcon width={13} height={13} />
+          </button>
+        </div>
+      )}
+
+      {/* 删除附件确认弹窗 */}
+      {deleteConfirmVisible && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 999,
+          }}
+        >
+          <div
+            style={{
+              width: 260,
+              backgroundColor: "#fff",
+              borderRadius: 12,
+              overflow: "hidden",
+              boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
+              textAlign: "center",
+            }}
+          >
+            <div style={{ padding: "20px 16px", fontSize: 15, fontWeight: 500, color: "#181818" }}>
+              是否要删除该聊天记录展示?
+            </div>
+            <div style={{ display: "flex", borderTop: "1px solid #eee", height: 44 }}>
+              <button
+                onClick={() => {
+                  onRemoveAttachment();
+                  setDeleteConfirmVisible(false);
+                }}
+                style={{
+                  flex: 1,
+                  background: "none",
+                  border: "none",
+                  borderRight: "1px solid #eee",
+                  fontSize: 15,
+                  color: "#e53e3e",
+                  cursor: "pointer",
+                }}
+              >
+                是
+              </button>
+              <button
+                onClick={() => setDeleteConfirmVisible(false)}
+                style={{
+                  flex: 1,
+                  background: "none",
+                  border: "none",
+                  fontSize: 15,
+                  color: "#555",
+                  cursor: "pointer",
+                }}
+              >
+                否
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <textarea
         ref={textareaRef}
         rows={1}
@@ -285,6 +392,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [minWordDraft, setMinWordDraft] = useState<string>("");
   const [maxWordDraft, setMaxWordDraft] = useState<string>("");
   const [castPickerOpen, setCastPickerOpen] = useState(false);
+  const [chatHistoryModalOpen, setChatHistoryModalOpen] = useState(false);
+  const [chatAttachment, setChatAttachment] = useState<SelectedChatAttachment | null>(null);
   // 生成状态按会话记录：避免在 A 会话生成时切到 B 会话也显示"正在生成"
   const [generatingSessionIds, setGeneratingSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   // 抽屉滑动手势用 ref 而不是 state：手指按住时 touchmove 每帧都在触发，
@@ -623,11 +732,26 @@ export function StoryApp({ onClose }: StoryAppProps) {
     const sessionId = activeSessionId;
     const characterId = activeCharacterId;
 
+    // 如果附带了聊天记录展示，将附件格式化并附在正文后注入 prompt
+    let fullUserRaw = userText;
+    let fullUserRender = userText;
+    if (chatAttachment && chatAttachment.messages.length > 0) {
+      const recordsFormatted = chatAttachment.messages
+        .map((m) => `[${m.speakerName}]: ${m.content}`)
+        .join("\n");
+      const attachmentBlock = `\n\n【向${currentCharacter?.name || "角色"}出示的真实聊天记录（来自微信）】：\n${recordsFormatted}`;
+      fullUserRaw = `${userText}${attachmentBlock}`;
+      // 用户气泡中附带一个优雅的展示框
+      fullUserRender = `${userText}\n\n<details class="story-chat-attachment-box"><summary>📑 出示的聊天记录（${chatAttachment.characterName}）</summary>\n\n\`\`\`\n${recordsFormatted}\n\`\`\`\n</details>`;
+      // 发送后清空本次挂载的附件
+      setChatAttachment(null);
+    }
+
     const userMessage = pushStoryMessage({
       sessionId,
       role: "user",
-      rawContent: userText,
-      renderedContent: userText,
+      rawContent: fullUserRaw,
+      renderedContent: fullUserRender,
     });
     setMessages((prev) => [...prev, userMessage]);
     setStorageVersion((value) => value + 1);
@@ -1174,21 +1298,38 @@ export function StoryApp({ onClose }: StoryAppProps) {
 
         <div className="story-drawer-section">
           <div className="story-drawer-eyebrow">工具</div>
-          <button
-            className="story-tool-btn"
-            onClick={() => {
-              try {
-                const rebuilt = rebuildStorySessionRenderCache(activeCharacterId, currentSession.id, { sessionFoldTags: currentSession.foldTags });
-                setMessages(rebuilt);
-                setStorageVersion((value) => value + 1);
-                alert(`缓存重建完成，${rebuilt.length} 条消息已更新`);
-              } catch (error) {
-                alert(error instanceof Error ? error.message : "缓存重建失败，请检查 API 绑定配置");
-              }
-            }}
-          >
-            重建渲染缓存
-          </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <button
+              className="story-tool-btn"
+              onClick={() => {
+                setChatHistoryModalOpen(true);
+                setDrawerOpen(false);
+              }}
+              style={{
+                borderRadius: 20,
+                padding: "8px 16px",
+                textAlign: "center",
+                fontWeight: 500,
+              }}
+            >
+              调用聊天记录
+            </button>
+            <button
+              className="story-tool-btn"
+              onClick={() => {
+                try {
+                  const rebuilt = rebuildStorySessionRenderCache(activeCharacterId, currentSession.id, { sessionFoldTags: currentSession.foldTags });
+                  setMessages(rebuilt);
+                  setStorageVersion((value) => value + 1);
+                  alert(`缓存重建完成，${rebuilt.length} 条消息已更新`);
+                } catch (error) {
+                  alert(error instanceof Error ? error.message : "缓存重建失败，请检查 API 绑定配置");
+                }
+              }}
+            >
+              重建渲染缓存
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -1418,8 +1559,20 @@ export function StoryApp({ onClose }: StoryAppProps) {
         characterName={currentCharacter.name}
         isGenerating={isGenerating}
         appendRequest={composerAppendRequest}
+        chatAttachment={chatAttachment}
+        onRemoveAttachment={() => setChatAttachment(null)}
         onSend={(text) => { void handleSend(text); }}
         onStop={handleStopGeneration}
+      />
+
+      {/* 调用聊天记录模态框 (仿手机页面) */}
+      <StoryChatHistoryModal
+        isOpen={chatHistoryModalOpen}
+        onClose={() => setChatHistoryModalOpen(false)}
+        targetCharacterName={currentCharacter.name}
+        onSelectAttachment={(attachment) => {
+          setChatAttachment(attachment);
+        }}
       />
 
       {/* CSS Style Modal */}
