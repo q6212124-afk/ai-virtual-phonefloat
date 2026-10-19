@@ -11,6 +11,7 @@ export type StoryUiPrefs = {
 export type StorySession = {
   id: string;
   characterId: string;
+  characterIds?: string[];      // Multiple participating characters for group story
   title?: string;
   updatedAt: string;
   customCSS?: string;
@@ -262,27 +263,37 @@ export function loadStoryProjectionEntries(
   characterId: string,
   options?: { afterTimestamp?: string; userName?: string; charName?: string }
 ): StoryProjectionEntry[] {
-  const session = _sessionsCache.find((item) => item.characterId === characterId);
-  if (!session) return [];
-  const messages = loadStoryMessages(session.id);
+  // 查找包含该角色的所有剧情会话（单人主绑定或多人共同参与）
+  const relevantSessions = _sessionsCache.filter(
+    (item) => item.characterId === characterId || (item.characterIds && item.characterIds.includes(characterId))
+  );
+  if (relevantSessions.length === 0) return [];
+
   const projections: StoryProjectionEntry[] = [];
+  const seenMessageIds = new Set<string>();
 
-  for (let i = 0; i < messages.length; i++) {
-    const current = messages[i];
-    if (current.role !== "assistant") continue;
-    if (options?.afterTimestamp && current.createdAt <= options.afterTimestamp) continue;
+  for (const session of relevantSessions) {
+    const messages = loadStoryMessages(session.id);
+    for (let i = 0; i < messages.length; i++) {
+      const current = messages[i];
+      if (current.role !== "assistant") continue;
+      if (seenMessageIds.has(current.id)) continue;
+      seenMessageIds.add(current.id);
 
-    if (!current.storySummary) continue;
-    const summaryText = compactProjectionText(current.storySummary, 500);
-    if (!summaryText) continue;
+      if (options?.afterTimestamp && current.createdAt <= options.afterTimestamp) continue;
 
-    const ts = formatChatTimestamp(current.createdAt);
-    projections.push({
-      id: `story_projection_${current.id}`,
-      timestamp: current.createdAt,
-      content: `[事件 ${ts}] ${summaryText}`,
-    });
+      if (!current.storySummary) continue;
+      const summaryText = compactProjectionText(current.storySummary, 500);
+      if (!summaryText) continue;
+
+      const ts = formatChatTimestamp(current.createdAt);
+      projections.push({
+        id: `story_projection_${current.id}`,
+        timestamp: current.createdAt,
+        content: `[事件 ${ts}] ${summaryText}`,
+      });
+    }
   }
 
-  return projections;
+  return projections.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }

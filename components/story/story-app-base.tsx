@@ -629,9 +629,13 @@ export function StoryApp({ onClose }: StoryAppProps) {
 
     try {
       const historyForGeneration = loadStoryMessages(sessionId);
+      const participatingIds = currentSession?.characterIds && currentSession.characterIds.length > 0
+        ? currentSession.characterIds
+        : [characterId];
       const result = await generateStoryCompletion(characterId, historyForGeneration, {
         sessionFoldTags: currentSession?.foldTags,
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
+        characterIds: participatingIds,
         signal: generationRun.controller.signal,
       });
       if (!isCurrentGeneration()) return;
@@ -649,18 +653,21 @@ export function StoryApp({ onClose }: StoryAppProps) {
       }
       setStorageVersion((value) => value + 1);
 
-      const storyCharacter = characters.find((character) => character.id === characterId);
-      if (storyCharacter) {
-        void (async () => {
-          try {
-            incrementEventCounter(characterId);
-            incrementEventCounter(characterId);
-            await maybeRunSummarization(characterId, storyCharacter.name);
-          } catch (err) {
-            console.warn("[StoryApp] Memory counter/summarization failed:", err);
+      void (async () => {
+        try {
+          for (const pId of participatingIds) {
+            const pChar = characters.find((character) => character.id === pId);
+            if (!pChar) continue;
+            incrementEventCounter(pId);
+            incrementEventCounter(pId);
+            await maybeRunSummarization(pId, pChar.name).catch((err) => {
+              console.warn(`[StoryApp] Summarization for ${pChar.name} failed:`, err);
+            });
           }
-        })();
-      }
+        } catch (err) {
+          console.warn("[StoryApp] Memory counter/summarization failed:", err);
+        }
+      })();
     } catch (error) {
       if (!isCurrentGeneration() || isAbortLikeError(error)) return;
       const errText = error instanceof Error ? error.message : "剧情生成失败，请稍后再试。";
@@ -836,9 +843,13 @@ export function StoryApp({ onClose }: StoryAppProps) {
     const generationRunId = generationRun.runId;
     const isCurrentGeneration = () => mountedRef.current && isStoryGenerationRunActive(sessionId, generationRunId);
     try {
+      const participatingIds = currentSession?.characterIds && currentSession.characterIds.length > 0
+        ? currentSession.characterIds
+        : [characterId];
       const result = await generateStoryCompletion(characterId, contextMessages, {
         sessionFoldTags: currentSession?.foldTags,
         sessionContextExcludedTags: currentSession?.contextExcludedTags,
+        characterIds: participatingIds,
         signal: generationRun.controller.signal,
       });
       if (!isCurrentGeneration()) return;
@@ -849,6 +860,22 @@ export function StoryApp({ onClose }: StoryAppProps) {
       });
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion(v => v + 1);
+
+      void (async () => {
+        try {
+          for (const pId of participatingIds) {
+            const pChar = characters.find((character) => character.id === pId);
+            if (!pChar) continue;
+            incrementEventCounter(pId);
+            incrementEventCounter(pId);
+            await maybeRunSummarization(pId, pChar.name).catch((err) => {
+              console.warn(`[StoryApp] Summarization for ${pChar.name} failed:`, err);
+            });
+          }
+        } catch (err) {
+          console.warn("[StoryApp] Memory counter/summarization failed:", err);
+        }
+      })();
     } catch (error) {
       if (!isCurrentGeneration() || isAbortLikeError(error)) return;
       const errText = error instanceof Error ? error.message : "重试失败，请稍后再试。";
@@ -926,7 +953,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
       {drawerOpen ? <div className="story-drawer-overlay" onClick={() => setDrawerOpen(false)} /> : null}
       <aside className="story-drawer" style={{ transform: drawerOpen ? "translateX(0)" : "translateX(106%)", transition: "transform 220ms ease" }}>
         <div className="story-drawer-section">
-          <div className="story-drawer-eyebrow">剧情角色</div>
+          <div className="story-drawer-eyebrow">主控角色（切换会话）</div>
           <div className="story-character-list">
             {characters.map((character) => (
               <button
@@ -942,6 +969,52 @@ export function StoryApp({ onClose }: StoryAppProps) {
                 <span className="story-character-name">{character.name}</span>
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="story-drawer-section">
+          <div className="story-drawer-eyebrow">当前剧情登场角色（多选，共同推进剧情与记忆）</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+            {characters.map((char) => {
+              const currentSelected = currentSession?.characterIds && currentSession.characterIds.length > 0
+                ? currentSession.characterIds
+                : [activeCharacterId];
+              const isChecked = currentSelected.includes(char.id);
+              return (
+                <label
+                  key={char.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "6px 8px",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    background: isChecked ? "var(--c-story-chip-bg-active, rgba(124, 104, 68, 0.12))" : "transparent",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    disabled={char.id === activeCharacterId}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? Array.from(new Set([...currentSelected, char.id]))
+                        : currentSelected.filter((id) => id !== char.id);
+                      applySessionUpdates({ characterIds: next });
+                    }}
+                    style={{ accentColor: "var(--c-story-primary, #7c6844)" }}
+                  />
+                  <Avatar src={char.avatar || undefined} name={char.name} size="sm" />
+                  <span style={{ fontSize: "calc(13px*var(--app-text-scale,1))", color: "var(--c-story-text, #4b4335)" }}>
+                    {char.name} {char.id === activeCharacterId ? "(主控)" : ""}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: "calc(11px*var(--app-text-scale,1))", marginTop: 6, color: "var(--c-story-sub, rgba(95, 82, 61, 0.72))" }}>
+            选中的角色将共同作为本段剧情的主角，其人设会被一并引入，且剧情事件将同步进入各自的记忆库；删除文本时则不计入记忆。
           </div>
         </div>
 
@@ -1067,7 +1140,14 @@ export function StoryApp({ onClose }: StoryAppProps) {
                 <div className="story-meta-body">
                   <div className="story-meta-title">本次阅读：《 {currentCharacter.name} 》</div>
                   <div className="story-meta-tags">
-                    {userIdentity?.name || "我"} x {currentCharacter.name}
+                    {userIdentity?.name || "我"} x {
+                      currentSession?.characterIds && currentSession.characterIds.length > 0
+                        ? currentSession.characterIds
+                            .map((id) => characters.find((c) => c.id === id)?.name)
+                            .filter(Boolean)
+                            .join(" x ")
+                        : currentCharacter.name
+                    }
                   </div>
                   <div className="story-meta-desc">
                     {/* Character type might not have description, so we use a stylized default text */}

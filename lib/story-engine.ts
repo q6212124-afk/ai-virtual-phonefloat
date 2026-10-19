@@ -136,7 +136,7 @@ export function getStoryRenderSignature(characterId: string): { regexSignature: 
 export async function generateStoryCompletion(
   characterId: string,
   history: StoryMessage[],
-  options?: { sessionFoldTags?: string; sessionContextExcludedTags?: string; signal?: AbortSignal },
+  options?: { sessionFoldTags?: string; sessionContextExcludedTags?: string; signal?: AbortSignal; characterIds?: string[] },
 ): Promise<StoryGenerationResult> {
   const character = loadCharacters().find((item) => item.id === characterId);
   if (!character) {
@@ -146,7 +146,7 @@ export async function generateStoryCompletion(
   const { apiConfig, preset, regexes, worldBooks, regexSignature, summaryTag } = resolveStoryConfigs(characterId);
   const effectiveFoldTags = options?.sessionFoldTags?.trim() || DEFAULT_STORY_FOLD_TAGS;
   const effectiveContextExcludedTags = options?.sessionContextExcludedTags?.trim() || DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS;
-  const llmMessages = await buildStoryPromptMessages(characterId, history, preset, regexes, worldBooks, effectiveContextExcludedTags);
+  const llmMessages = await buildStoryPromptMessages(characterId, history, preset, regexes, worldBooks, effectiveContextExcludedTags, options?.characterIds);
 
   const userIdentity = resolveUserIdentity(characterId, "story");
   const macroEngine = new MacroEngine(character.name, userIdentity?.name ?? "用户");
@@ -180,10 +180,36 @@ async function buildStoryPromptMessages(
   regexes: RegexConfig[],
   worldBooks: WorldBookConfig[],
   contextExcludedTags: string = DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS,
+  characterIds?: string[],
 ): Promise<LLMMessage[]> {
-  const character = loadCharacters().find((item) => item.id === characterId);
+  const allCharacters = loadCharacters();
+  const character = allCharacters.find((item) => item.id === characterId);
   if (!character) {
     throw new ChatEngineError(`Character not found: ${characterId}`);
+  }
+
+  // 多角色支持：如果指定了多个角色，组合各角色人设
+  const targetIds = characterIds && characterIds.length > 0 ? Array.from(new Set(characterIds)) : [characterId];
+  let effectiveCharacter = character;
+  if (targetIds.length > 1) {
+    const castChars = allCharacters.filter((c) => targetIds.includes(c.id));
+    const castPromptText = castChars.map((c) => {
+      const parts = [`【角色：${c.name}】`];
+      if (c.description) parts.push(`简介: ${c.description}`);
+      if (c.personality) parts.push(`性格: ${c.personality}`);
+      if (c.prompt) parts.push(`设定:\n${c.prompt}`);
+      return parts.join("\n");
+    }).join("\n\n---\n\n");
+
+    const multiPrompt = [
+      character.prompt || "",
+      "\n\n====================\n【多人互动剧情设定】\n本段剧情由多位角色共同参与。请根据以下各角色人设推演互动，每位角色保持其各自口吻、性格与关系：\n\n" + castPromptText + "\n====================\n"
+    ].join("");
+
+    effectiveCharacter = {
+      ...character,
+      prompt: multiPrompt,
+    };
   }
 
   const userIdentity = resolveUserIdentity(characterId, "story");
@@ -202,7 +228,7 @@ async function buildStoryPromptMessages(
   const now = new Date();
 
   return assemblePromptPayload({
-    character,
+    character: effectiveCharacter,
     history: truncatedHistory,
     preset,
     worldBooks,
@@ -222,7 +248,7 @@ async function buildStoryPromptMessages(
 export async function previewStoryPromptPayload(
   characterId: string,
   history: StoryMessage[],
-  options?: { sessionContextExcludedTags?: string },
+  options?: { sessionContextExcludedTags?: string; characterIds?: string[] },
 ): Promise<StoryPreviewResult> {
   const character = loadCharacters().find((item) => item.id === characterId);
   if (!character) {
@@ -230,7 +256,7 @@ export async function previewStoryPromptPayload(
   }
   const { apiConfig, preset, regexes, worldBooks } = resolveStoryConfigs(characterId);
   const effectiveContextExcludedTags = options?.sessionContextExcludedTags?.trim() || DEFAULT_STORY_CONTEXT_EXCLUDED_TAGS;
-  const llmMessages = await buildStoryPromptMessages(characterId, history, preset, regexes, worldBooks, effectiveContextExcludedTags);
+  const llmMessages = await buildStoryPromptMessages(characterId, history, preset, regexes, worldBooks, effectiveContextExcludedTags, options?.characterIds);
   return {
     messages: previewMessagesForApi(apiConfig, preset, llmMessages),
     characterName: character.name,
