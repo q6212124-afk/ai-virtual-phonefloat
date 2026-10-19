@@ -311,19 +311,15 @@ export function StoryChatHistoryModal({
         justifyContent: "center",
       }}
     >
-      {/* 仿手机外壳容器 */}
+      {/* 仿手机外壳容器 (全屏贴合，完美适配超高长宽比屏幕，无底部悬空留白) */}
       <div
         style={{
           width: "100%",
-          maxWidth: 420,
           height: "100%",
-          maxHeight: 740,
           backgroundColor: "#ededed",
-          borderRadius: 24,
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "0 20px 40px rgba(0,0,0,0.22)",
           position: "relative",
           userSelect: "none",
         }}
@@ -334,12 +330,15 @@ export function StoryChatHistoryModal({
             {/* 顶栏: 退出箭头、微信、加号 */}
             <div
               style={{
-                height: 52,
+                paddingTop: "env(safe-area-inset-top, 0px)",
+                height: "calc(52px + env(safe-area-inset-top, 0px))",
+                boxSizing: "border-box",
                 backgroundColor: "#ededed",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "0 16px",
+                paddingLeft: 16,
+                paddingRight: 16,
                 borderBottom: "1px solid rgba(0,0,0,0.06)",
                 flexShrink: 0,
               }}
@@ -434,7 +433,9 @@ export function StoryChatHistoryModal({
             {/* 底栏: 微信、通讯录、发现、我 (仿图一展示排版) */}
             <div
               style={{
-                height: 54,
+                paddingBottom: "env(safe-area-inset-bottom, 0px)",
+                minHeight: "calc(54px + env(safe-area-inset-bottom, 0px))",
+                boxSizing: "border-box",
                 backgroundColor: "#f7f7f7",
                 borderTop: "1px solid rgba(0,0,0,0.06)",
                 display: "flex",
@@ -474,12 +475,15 @@ export function StoryChatHistoryModal({
             {/* 顶栏: 返回箭头、{char_name}、… */}
             <div
               style={{
-                height: 52,
+                paddingTop: "env(safe-area-inset-top, 0px)",
+                height: "calc(52px + env(safe-area-inset-top, 0px))",
+                boxSizing: "border-box",
                 backgroundColor: "#ededed",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "0 16px",
+                paddingLeft: 16,
+                paddingRight: 16,
                 borderBottom: "1px solid rgba(0,0,0,0.06)",
                 position: "relative",
                 flexShrink: 0,
@@ -680,13 +684,16 @@ export function StoryChatHistoryModal({
               /* 选择模式底部动作条: 左边取消，右边选择 */
               <div
                 style={{
-                  height: 56,
+                  paddingBottom: "env(safe-area-inset-bottom, 0px)",
+                  minHeight: "calc(56px + env(safe-area-inset-bottom, 0px))",
+                  boxSizing: "border-box",
                   backgroundColor: "#f7f7f7",
                   borderTop: "1px solid rgba(0,0,0,0.08)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  padding: "0 20px",
+                  paddingLeft: 20,
+                  paddingRight: 20,
                   flexShrink: 0,
                 }}
               >
@@ -731,12 +738,16 @@ export function StoryChatHistoryModal({
               /* 正常交互栏: 胶囊输入框 + AI回复按钮 + 发送按钮 */
               <div
                 style={{
-                  minHeight: 56,
+                  minHeight: "calc(56px + env(safe-area-inset-bottom, 0px))",
+                  paddingBottom: "calc(8px + env(safe-area-inset-bottom, 0px))",
+                  boxSizing: "border-box",
                   backgroundColor: "#f7f7f7",
                   borderTop: "1px solid rgba(0,0,0,0.08)",
                   display: "flex",
                   alignItems: "center",
-                  padding: "8px 12px",
+                  paddingLeft: 12,
+                  paddingRight: 12,
+                  paddingTop: 8,
                   gap: 8,
                   flexShrink: 0,
                 }}
@@ -819,12 +830,15 @@ export function StoryChatHistoryModal({
             {/* 顶栏: 返回箭头、查找 */}
             <div
               style={{
-                height: 52,
+                paddingTop: "env(safe-area-inset-top, 0px)",
+                height: "calc(52px + env(safe-area-inset-top, 0px))",
+                boxSizing: "border-box",
                 backgroundColor: "#ededed",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "0 16px",
+                paddingLeft: 16,
+                paddingRight: 16,
                 borderBottom: "1px solid rgba(0,0,0,0.06)",
                 flexShrink: 0,
               }}
@@ -957,12 +971,15 @@ export function StoryChatHistoryModal({
             {/* 顶栏: 返回箭头、{char_name} (切片) */}
             <div
               style={{
-                height: 52,
+                paddingTop: "env(safe-area-inset-top, 0px)",
+                height: "calc(52px + env(safe-area-inset-top, 0px))",
+                boxSizing: "border-box",
                 backgroundColor: "#ededed",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "0 16px",
+                paddingLeft: 16,
+                paddingRight: 16,
                 borderBottom: "1px solid rgba(0,0,0,0.06)",
                 flexShrink: 0,
               }}
@@ -1069,13 +1086,16 @@ export function StoryChatHistoryModal({
             {/* 切片页底部动作条: 左取消，右选择 */}
             <div
               style={{
-                height: 56,
+                paddingBottom: "env(safe-area-inset-bottom, 0px)",
+                minHeight: "calc(56px + env(safe-area-inset-bottom, 0px))",
+                boxSizing: "border-box",
                 backgroundColor: "#f7f7f7",
                 borderTop: "1px solid rgba(0,0,0,0.08)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "0 20px",
+                paddingLeft: 20,
+                paddingRight: 20,
                 flexShrink: 0,
               }}
             >

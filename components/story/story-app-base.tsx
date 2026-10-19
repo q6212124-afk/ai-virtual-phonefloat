@@ -245,7 +245,7 @@ const StoryComposer = memo(function StoryComposer({
   };
 
   return (
-    <div className="story-composer" style={{ position: "relative" }}>
+    <div className="story-composer">
       {/* 依附在输入框上方的聊天记录附件 */}
       {chatAttachment && (
         <div
