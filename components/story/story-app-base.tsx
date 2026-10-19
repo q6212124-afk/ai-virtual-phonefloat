@@ -656,6 +656,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
         rawContent: result.rawText,
         renderedContent: result.renderedText,
         storySummary: result.storySummary,
+        characterIds: participatingIds,
         regexSignature: result.regexSignature,
         parserVersion: result.parserVersion,
       });
@@ -869,7 +870,9 @@ export function StoryApp({ onClose }: StoryAppProps) {
       const assistantMessage = pushStoryMessage({
         sessionId, role: "assistant",
         rawContent: result.rawText, renderedContent: result.renderedText,
-        storySummary: result.storySummary, regexSignature: result.regexSignature, parserVersion: result.parserVersion,
+        storySummary: result.storySummary,
+        characterIds: participatingIds,
+        regexSignature: result.regexSignature, parserVersion: result.parserVersion,
       });
       if (activeSessionIdRef.current === sessionId) setMessages(loadStoryMessages(sessionId));
       setStorageVersion(v => v + 1);
@@ -1281,23 +1284,22 @@ export function StoryApp({ onClose }: StoryAppProps) {
                   </button>
                 ) : null}
                 {visibleMessages.map((message) => {
-                  const isMulti = currentSession?.characterIds && currentSession.characterIds.length > 1;
-                  const multiNames = isMulti
-                    ? currentSession.characterIds!
-                        .map((id) => characters.find((c) => c.id === id)?.name)
-                        .filter(Boolean)
-                        .join(" & ")
-                    : currentCharacter.name;
+                  // 根据消息自身快照判断角色，若历史消息无快照，单人会话则为单人
+                  const msgCharIds = message.characterIds;
+                  const isMultiMsg = message.role === "assistant" && Array.isArray(msgCharIds) && msgCharIds.length > 1;
+                  const castChars = isMultiMsg
+                    ? msgCharIds.map((id) => characters.find((c) => c.id === id)).filter(Boolean) as typeof characters
+                    : [];
 
                   const speakerName = message.role === "user"
                     ? (userIdentity?.name?.trim() || "我")
                     : message.role === "assistant"
-                      ? (isMulti ? `同框互动 (${multiNames})` : currentCharacter.name)
+                      ? currentCharacter.name
                       : "系统";
                   const avatarUrl = message.role === "user"
                     ? (userIdentity?.avatarUrl || undefined)
                     : message.role === "assistant"
-                      ? (isMulti ? undefined : (currentCharacter.avatar || undefined))
+                      ? (currentCharacter.avatar || undefined)
                       : undefined;
                   return (
                     <article
@@ -1315,15 +1317,29 @@ export function StoryApp({ onClose }: StoryAppProps) {
                       }}
                     >
                       {message.role !== "system" ? (
-                        <div className="story-msg-head">
-                          <div className="story-avatar-wrap">
-                            <Avatar src={avatarUrl} name={speakerName} size="md" />
+                        isMultiMsg ? (
+                          <div className="story-msg-multi-head">
+                            <div className="story-multi-cast-bar">
+                              {castChars.map((c) => (
+                                <div key={c.id} className="story-cast-member">
+                                  <Avatar src={c.avatar || undefined} name={c.name} size="sm" />
+                                  <span className="story-cast-member-name">{c.name}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <span className="story-multi-cast-time">{formatStoryTime(message.createdAt)}</span>
                           </div>
-                          <div className="story-msg-meta">
-                            <span className="story-msg-name">{speakerName}</span>
-                            <span className="story-msg-time">{formatStoryTime(message.createdAt)}</span>
+                        ) : (
+                          <div className="story-msg-head">
+                            <div className="story-avatar-wrap">
+                              <Avatar src={avatarUrl} name={speakerName} size="md" />
+                            </div>
+                            <div className="story-msg-meta">
+                              <span className="story-msg-name">{speakerName}</span>
+                              <span className="story-msg-time">{formatStoryTime(message.createdAt)}</span>
+                            </div>
                           </div>
-                        </div>
+                        )
                       ) : null}
                       <div className="story-bubble-wrap" style={{ position: "relative" }}>
                         <div className="story-bubble">

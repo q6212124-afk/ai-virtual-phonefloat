@@ -33,6 +33,7 @@ export type StoryMessage = {
   rawContent: string;
   renderedContent?: string;
   storySummary?: string;
+  characterIds?: string[];      // Snapshot of participating characters when this message was generated
   regexSignature?: string;
   parserVersion?: number;
   createdAt: string;

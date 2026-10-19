@@ -478,6 +478,49 @@
           gap: 2px;
           min-width: 0;
         }
+        /* 多人同框横向多角色栏与头部排版 */
+        .story-msg-multi-head {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          width: 100%;
+          margin-bottom: 4px;
+        }
+        .story-multi-cast-bar {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          overflow-x: auto;
+          overflow-y: hidden;
+          padding: 2px 0 6px 0;
+          max-width: 100%;
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+          -webkit-overflow-scrolling: touch;
+        }
+        .story-multi-cast-bar::-webkit-scrollbar {
+          display: none;
+        }
+        .story-cast-member {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          flex: 0 0 auto;
+          padding: 4px 10px 4px 4px;
+          background: var(--c-story-bubble-bg, #ffffff);
+          box-shadow: var(--story-paper-shadow-soft);
+        }
+        .story-cast-member-name {
+          font-size: calc(13px*var(--app-text-scale,1));
+          font-weight: 600;
+          color: var(--c-story-heading, #1e293b);
+          white-space: nowrap;
+        }
+        .story-multi-cast-time {
+          font-size: calc(11px*var(--app-text-scale,1));
+          color: var(--c-story-sub, #94a3b8);
+          padding-left: 2px;
+        }
         .story-row[data-role="user"] .story-msg-meta {
           align-items: flex-end;
         }
