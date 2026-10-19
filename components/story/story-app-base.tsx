@@ -1180,15 +1180,23 @@ export function StoryApp({ onClose }: StoryAppProps) {
                   </button>
                 ) : null}
                 {visibleMessages.map((message) => {
+                  const isMulti = currentSession?.characterIds && currentSession.characterIds.length > 1;
+                  const multiNames = isMulti
+                    ? currentSession.characterIds!
+                        .map((id) => characters.find((c) => c.id === id)?.name)
+                        .filter(Boolean)
+                        .join(" & ")
+                    : currentCharacter.name;
+
                   const speakerName = message.role === "user"
                     ? (userIdentity?.name?.trim() || "我")
                     : message.role === "assistant"
-                      ? currentCharacter.name
+                      ? (isMulti ? `同框互动 (${multiNames})` : currentCharacter.name)
                       : "系统";
                   const avatarUrl = message.role === "user"
                     ? (userIdentity?.avatarUrl || undefined)
                     : message.role === "assistant"
-                      ? (currentCharacter.avatar || undefined)
+                      ? (isMulti ? undefined : (currentCharacter.avatar || undefined))
                       : undefined;
                   return (
                     <article
