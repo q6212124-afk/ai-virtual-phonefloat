@@ -301,7 +301,7 @@ export function StoryChatHistoryModal({
   return (
     <div
       style={{
-        position: "absolute",
+        position: "fixed",
         inset: 0,
         zIndex: 500,
         backgroundColor: "rgba(0, 0, 0, 0.45)",
@@ -311,17 +311,20 @@ export function StoryChatHistoryModal({
         justifyContent: "center",
       }}
     >
-      {/* 仿手机外壳容器 (全屏贴合，完美适配超高长宽比屏幕，无底部悬空留白) */}
+      {/* 仿手机外壳容器 (自适应手机全宽或居中仿手机形态，完美适配所有屏幕分辨率与边缘安全区) */}
       <div
         style={{
           width: "100%",
+          maxWidth: 480,
           height: "100%",
+          maxHeight: "100dvh",
           backgroundColor: "#ededed",
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
           position: "relative",
           userSelect: "none",
+          boxShadow: "0 0 30px rgba(0, 0, 0, 0.25)",
         }}
       >
         {/* ===================== VIEW 1: 联系人选择页 ===================== */}

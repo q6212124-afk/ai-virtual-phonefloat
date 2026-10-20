@@ -64,6 +64,9 @@
           box-shadow:
             0 2px 8px rgba(0, 0, 0, 0.022),
             0 8px 20px rgba(0, 0, 0, 0.014);
+          /* 居中并限制最大宽度，与底栏和卡片完全一致 */
+          max-width: 680px;
+          margin: 0 auto;
         }
         .story-header-safe-area {
           height: var(--page-header-safe-top, 48px);
@@ -266,6 +269,7 @@
         }
         /* 一整张长卡片：阅读卡与正文都在这张纸上，顶栏底栏悬浮其上 */
         .story-stage-inner {
+          width: 100%;
           max-width: 680px;
           margin: 0 auto;
           display: flex;
@@ -607,6 +611,9 @@
           align-items: flex-end;
           gap: 8px;
           transition: none;
+          /* 居中并限制最大宽度，与主纸张卡片宽度对齐 */
+          max-width: 680px;
+          margin: 0 auto;
         }
         .story-composer:focus-within {
           background: var(--c-story-input-bar-focus, var(--c-story-meta-bg, #ffffff));
