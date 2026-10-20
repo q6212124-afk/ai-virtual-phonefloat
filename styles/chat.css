@@ -4996,10 +4996,9 @@
 .voicecall-subtitle-mask > :first-child {
   margin-top: auto;
 }
-/* In text-input mode the input bar floats over the bottom of this area; reserve
-   space so the newest message isn't hidden behind it. */
+/* In text-input mode the input bar is in normal flow; no extra bottom padding needed */
 .voicecall-subtitle-mask[data-text-input] {
-  padding-bottom: 56px;
+  padding-bottom: 12px;
 }
 
 /* ── Voice call avatar ── */
@@ -5120,12 +5119,8 @@
 }
 
 .voicecall-text-input-panel {
-  position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 112px);
-  width: auto;
-  padding: 0;
+  width: 100%;
+  padding: 0 18px 8px;
 }
 
 .gcall-root[data-text-input] .gcall-text-input-panel {

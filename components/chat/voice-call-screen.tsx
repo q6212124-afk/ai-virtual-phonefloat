@@ -6,7 +6,8 @@ import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
 import { parseAIResponse } from "@/lib/rich-message-parser";
 import { generateChatCompletion, flattenCompletionResult, ChatEngineError } from "@/lib/chat-engine";
-import { resolveUserIdentity } from "@/lib/settings-storage";
+import { resolveUserIdentity, loadBindingConfig, loadApiConfigs, resolveBinding } from "@/lib/settings-storage";
+import { simpleLLMCall } from "@/lib/api-helpers";
 import { cancelFollowUp } from "@/lib/follow-up-service";
 import { createSTTSession, type STTSession } from "@/lib/stt-service";
 import { resolveVoiceConfig, synthesizeSpeech, playAudioBlob, playAudioBlobViaMediaElement, setCallAudioSessionActive } from "@/lib/tts-service";
@@ -37,8 +38,9 @@ type CallState =
 
 type SubtitleEntry = {
     id: string;
-    role: "user" | "assistant";
+    role: "user" | "assistant" | "proxy";
     text: string;
+    senderName?: string;
 };
 
 type VoiceCallScreenProps = {
@@ -337,30 +339,16 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     const runConversationTurn = useCallback(async (userText?: string, designatedSpeakerCharId?: string | null) => {
         const activeChar = designatedSpeakerCharId ? selectedProxyChars.find(c => c.id === designatedSpeakerCharId) : null;
-        let effectiveUserPrompt = userText || "";
 
-        if (activeChar && userText) {
-            // 用户发言且选中了角色：两者一起在场发言
-            effectiveUserPrompt = `[用户与${activeChar.name}在电话旁] ${userNameRef.current}: "${userText}"\n（${activeChar.name}抢过或接过手机参与了通话）`;
-        } else if (activeChar && !userText) {
-            // 只有该角色发言（抢过电话代接代答）
-            effectiveUserPrompt = `（${activeChar.name}抢过了手机，对着听筒开口说话）`;
-        }
-
-        // 1. Save user/proxy message
-        if (effectiveUserPrompt) {
+        // 1. 展现与保存用户气泡（如果有输入）
+        if (userText) {
             const userMsg = pushChatMessage({
                 sessionId: session.id,
                 role: "user",
-                content: effectiveUserPrompt,
+                content: userText,
             });
             messagesRef.current = [...messagesRef.current, userMsg];
-
-            // Subtitle
-            const displaySub = userText
-                ? (activeChar ? `[${userNameRef.current} & ${activeChar.name}]: ${userText}` : userText)
-                : `（${activeChar?.name} 抢过手机代答）`;
-            setSubtitles(prev => [...prev, { id: userMsg.id, role: "user", text: displaySub }]);
+            setSubtitles(prev => [...prev, { id: userMsg.id, role: "user", text: userText }]);
         }
 
         // 2. Switch to PROCESSING
@@ -368,15 +356,64 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         setInterimText("");
 
         try {
+            // 2.1 如果选中了代接角色，先单独为代接角色生成一段即时发言
+            let proxySpeechText = "";
+            if (activeChar) {
+                try {
+                    const bindings = loadBindingConfig();
+                    const activeSlot = resolveBinding(bindings, activeChar.id, "chat");
+                    const apiConfigs = loadApiConfigs();
+                    const proxyConfig = apiConfigs.find(c => c.id === activeSlot.apiConfigId) || apiConfigs[0];
+
+                    if (proxyConfig) {
+                        const recentHistory = messagesRef.current.slice(-6).map(m => `${m.role === "user" ? userNameRef.current : character.name}: ${m.content}`).join("\n");
+                        const proxyPrompt = [
+                            `你是${activeChar.name}。你现在和${userNameRef.current}在一起，而电话对面的${character.name}正打电话过来。`,
+                            activeChar.persona ? `【你的设定】\n${activeChar.persona}` : "",
+                            userText ? `【刚刚${userNameRef.current}对着电话说】：“${userText}”` : `【你在旁边抢过/接过手机准备代接说话】`,
+                            `【最近对话】\n${recentHistory}`,
+                            `【要求】`,
+                            `请以${activeChar.name}的身份，对着听筒说一两句自然简短的话。`,
+                            `只说口语台词，可以带极简短动作（如"（拿过手机）"），情绪重点在语气上，严禁大段动作描写和叙述。直接输出台词本身，不要带有角色名字前缀。`,
+                        ].filter(Boolean).join("\n\n");
+
+                        const proxyRes = await simpleLLMCall(proxyConfig, [
+                            { role: "system", content: `你是${activeChar.name}。根据情境直接代答电话。` },
+                            { role: "user", content: proxyPrompt }
+                        ], { max_tokens: 150 });
+
+                        if (proxyRes.content) {
+                            proxySpeechText = proxyRes.content.trim().replace(/^["“]|["”]$/g, "");
+                            // 保存代接角色的发言气泡（role 为 proxy）
+                            const proxyMsg = pushChatMessage({
+                                sessionId: session.id,
+                                role: "user",
+                                content: `[${activeChar.name}]: ${proxySpeechText}`,
+                            });
+                            messagesRef.current = [...messagesRef.current, proxyMsg];
+                            setSubtitles(prev => [...prev, {
+                                id: `proxy-${Date.now()}`,
+                                role: "proxy",
+                                text: proxySpeechText,
+                                senderName: activeChar.name,
+                            }]);
+                        }
+                    }
+                } catch (e) {
+                    console.warn("[VoiceCall] Proxy char speech generation error:", e);
+                }
+            }
+
             // 注入修罗场与电话通话强约束系统指令
             const callConstraints = selectedProxyChars.length > 0 ? [
-                `【修罗场/代接电话特殊情境】当前为实时电话通话。除了电话对面的${character.name}，现场还有代接角色：${selectedProxyChars.map(c => c.name).join("、")}。`,
-                `各代接角色设定：\n${selectedProxyChars.map(c => `[${c.name}]: ${c.persona || ""}`).join("\n")}`,
+                `【修罗场/代接电话特殊情境】当前为实时电话通话。除了电话对面的你（${character.name}），电话那头现场还有：${userNameRef.current}以及代接角色${selectedProxyChars.map(c => c.name).join("、")}。`,
+                activeChar && proxySpeechText ? `刚刚${activeChar.name}抢过手机对你说了：“${proxySpeechText}”。` : "",
+                `各在场角色设定：\n${selectedProxyChars.map(c => `[${c.name}]: ${c.persona || ""}`).join("\n")}`,
                 `【通话表现极重要规范】`,
                 `1. 严格契合角色人设，严禁OOC。`,
                 `2. 此为电话接听，注重语言表达，情绪表现必须集中在口语对话上。`,
-                `3. 动作描写只允许出现简短的括注，如（抢过手机）（加大音量）（低声冷笑）等，严禁出现大段动作与环境叙述描写！`,
-            ].join("\n") : "";
+                `3. 动作描写只允许出现简短的括注，如（提高音量）（低声冷笑）等，严禁出现大段动作与环境叙述描写！`,
+            ].filter(Boolean).join("\n") : "";
 
             if (callConstraints) {
                 const sysDirectiveMsg = pushChatMessage({
@@ -387,7 +424,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                 messagesRef.current = [...messagesRef.current, sysDirectiveMsg];
             }
 
-            // 3. Generate AI response
+            // 3. Generate AI response (电话对面角色的回应)
             const aiResponseText = flattenCompletionResult(await generateChatCompletion(session, messagesRef.current, {
                 appTags: ["chat", "voice"],
             }));
@@ -661,7 +698,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     return (
         <div
-            className="absolute inset-0 z-[100] flex flex-col text-white overflow-hidden call-bg-default call-keyboard-shift"
+            className="fixed inset-0 z-[100] flex flex-col text-white overflow-hidden bg-[#0c121e] call-keyboard-shift"
             style={bgImageResolved ? { ...keyboardOffsetStyle, background: `url(${bgImageResolved}) center/cover no-repeat` } : keyboardOffsetStyle}
         >
             {/* Dark overlay for readability */}
@@ -673,7 +710,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
             <CallVolumeControl />
 
             {/* Content wrapper — force white text so themes don't override call UI */}
-            <div className="voicecall-controls gcall-body">
+            <div className="voicecall-controls gcall-body flex-1 min-h-0 flex flex-col">
                 {/* Top: Duration + Status */}
                 <div className="gcall-topbar">
                     <div className="gcall-topbar-title">
@@ -738,15 +775,38 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                     className="voicecall-subtitle-mask flex-1 min-h-0 overflow-auto px-5 py-[10px] flex flex-col gap-2 relative"
                     {...(inputMode === "text" && callState !== "CONNECTING" && callState !== "ENDED" ? { "data-text-input": "" } : {})}
                 >
-                    {subtitles.map((sub) => (
-                        <div
-                            key={sub.id}
-                            className="call-subtitle"
-                            data-role={sub.role}
-                        >
-                            <BilingualTextBlock text={sub.text} mode="plain" className="call-subtitle-bilingual" defaultExpanded={session.collapseBilingualTranslation !== false ? false : true} />
-                        </div>
-                    ))}
+                    {subtitles.map((sub) => {
+                        const isProxy = sub.role === "proxy";
+                        return (
+                            <div
+                                key={sub.id}
+                                className="call-subtitle"
+                                data-role={sub.role}
+                                style={
+                                    isProxy
+                                        ? {
+                                            alignSelf: "flex-end",
+                                            background: "rgba(37, 99, 235, 0.85)", // 蓝色气泡
+                                            color: "#fff",
+                                        }
+                                        : undefined
+                                }
+                            >
+                                {isProxy ? (
+                                    <div className="flex flex-col">
+                                        <div className="text-[11px] font-semibold opacity-90 pb-0.5 border-b border-white/20 mb-1">
+                                            {sub.senderName}
+                                        </div>
+                                        <div className="leading-relaxed whitespace-pre-wrap">
+                                            {sub.text}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <BilingualTextBlock text={sub.text} mode="plain" className="call-subtitle-bilingual" defaultExpanded={session.collapseBilingualTranslation !== false ? false : true} />
+                                )}
+                            </div>
+                        );
+                    })}
 
                     {/* Interim STT text */}
                     {interimText && callState === "USER_SPEAKING" && (
@@ -756,9 +816,9 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                     )}
                 </div>
 
-                {/* 选中的代接角色水平滚动席位栏（图二，在输入框上方） */}
+                {/* 选中的代接角色水平滚动席位栏（图二，在输入框上方，预留足够的底部和顶部间隔避免被遮挡） */}
                 {selectedProxyChars.length > 0 && callState !== "CONNECTING" && callState !== "ENDED" && (
-                    <div className="px-5 py-2 flex items-center gap-4 overflow-x-auto flex-none" style={{ scrollbarWidth: "none" }}>
+                    <div className="px-5 pt-3 pb-2 flex items-center gap-4 overflow-x-auto flex-none z-20" style={{ scrollbarWidth: "none" }}>
                         {selectedProxyChars.map((proxyChar) => {
                             const isSpeakingActive = activeSpeakerCharId === proxyChar.id;
                             return (
