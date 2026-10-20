@@ -21,6 +21,9 @@ import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHi
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
 import { CallVolumeControl } from "./call-volume-control";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
+import { loadCharacters } from "@/lib/character-storage";
+import { getCharacterWorldGroupId, loadCharacterWorldGroups } from "@/lib/character-world-storage";
+import { saveMemoryEntry } from "@/lib/memory-storage";
 
 // ── Types ───────────────────────────────────────────
 
@@ -80,6 +83,13 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
     const [showSttWarning, setShowSttWarning] = useState(false);
 
+    // 代接功能相关状态
+    const [showAnswerOptions, setShowAnswerOptions] = useState(false);
+    const [showProxyModal, setShowProxyModal] = useState(false);
+    const [proxySearchText, setProxySearchText] = useState("");
+    const [selectedProxyChars, setSelectedProxyChars] = useState<Character[]>([]);
+    const [activeSpeakerCharId, setActiveSpeakerCharId] = useState<string | null>(null);
+
     const sttRef = useRef<STTSession | null>(null);
     const audioAbortRef = useRef<(() => void) | null>(null);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -137,6 +147,26 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         hideCallSttWarningPermanently();
         setShowSttWarning(false);
     }, []);
+
+    // 获取与当前来电角色处于同一世界书/世界群组的其他角色
+    const candidateChars = typeof window !== "undefined" ? (() => {
+        try {
+            const allChars = loadCharacters();
+            const currentGroupId = getCharacterWorldGroupId(character.id);
+            if (!currentGroupId) return [];
+            const groups = loadCharacterWorldGroups();
+            const targetGroup = groups.find(g => g.id === currentGroupId);
+            if (!targetGroup) return [];
+            return allChars.filter(c => c.id !== character.id && targetGroup.memberIds.includes(c.id));
+        } catch {
+            return [];
+        }
+    })() : [];
+
+    const filteredCandidates = candidateChars.filter(c => {
+        if (!proxySearchText.trim()) return true;
+        return c.name.toLowerCase().includes(proxySearchText.trim().toLowerCase());
+    });
 
     // Scroll subtitles to bottom on change
     useEffect(() => {
@@ -305,18 +335,32 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     // ── Full conversation turn ──────────────────────
 
-    const runConversationTurn = useCallback(async (userText?: string) => {
-        // 1. Save user message (skip for initial greeting)
-        if (userText) {
+    const runConversationTurn = useCallback(async (userText?: string, designatedSpeakerCharId?: string | null) => {
+        const activeChar = designatedSpeakerCharId ? selectedProxyChars.find(c => c.id === designatedSpeakerCharId) : null;
+        let effectiveUserPrompt = userText || "";
+
+        if (activeChar && userText) {
+            // 用户发言且选中了角色：两者一起在场发言
+            effectiveUserPrompt = `[用户与${activeChar.name}在电话旁] ${userNameRef.current}: "${userText}"\n（${activeChar.name}抢过或接过手机参与了通话）`;
+        } else if (activeChar && !userText) {
+            // 只有该角色发言（抢过电话代接代答）
+            effectiveUserPrompt = `（${activeChar.name}抢过了手机，对着听筒开口说话）`;
+        }
+
+        // 1. Save user/proxy message
+        if (effectiveUserPrompt) {
             const userMsg = pushChatMessage({
                 sessionId: session.id,
                 role: "user",
-                content: userText,
+                content: effectiveUserPrompt,
             });
             messagesRef.current = [...messagesRef.current, userMsg];
 
-            // Add user subtitle
-            setSubtitles(prev => [...prev, { id: userMsg.id, role: "user", text: userText }]);
+            // Subtitle
+            const displaySub = userText
+                ? (activeChar ? `[${userNameRef.current} & ${activeChar.name}]: ${userText}` : userText)
+                : `（${activeChar?.name} 抢过手机代答）`;
+            setSubtitles(prev => [...prev, { id: userMsg.id, role: "user", text: displaySub }]);
         }
 
         // 2. Switch to PROCESSING
@@ -324,6 +368,25 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         setInterimText("");
 
         try {
+            // 注入修罗场与电话通话强约束系统指令
+            const callConstraints = selectedProxyChars.length > 0 ? [
+                `【修罗场/代接电话特殊情境】当前为实时电话通话。除了电话对面的${character.name}，现场还有代接角色：${selectedProxyChars.map(c => c.name).join("、")}。`,
+                `各代接角色设定：\n${selectedProxyChars.map(c => `[${c.name}]: ${c.persona || ""}`).join("\n")}`,
+                `【通话表现极重要规范】`,
+                `1. 严格契合角色人设，严禁OOC。`,
+                `2. 此为电话接听，注重语言表达，情绪表现必须集中在口语对话上。`,
+                `3. 动作描写只允许出现简短的括注，如（抢过手机）（加大音量）（低声冷笑）等，严禁出现大段动作与环境叙述描写！`,
+            ].join("\n") : "";
+
+            if (callConstraints) {
+                const sysDirectiveMsg = pushChatMessage({
+                    sessionId: session.id,
+                    role: "system",
+                    content: callConstraints,
+                });
+                messagesRef.current = [...messagesRef.current, sysDirectiveMsg];
+            }
+
             // 3. Generate AI response
             const aiResponseText = flattenCompletionResult(await generateChatCompletion(session, messagesRef.current, {
                 appTags: ["chat", "voice"],
@@ -513,14 +576,15 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
 
     const handleTextSubmit = useCallback(() => {
         const text = typedText.trim();
-        if (!text || callState !== "IDLE") return;
+        // 允许空文本发送，前提是当前选中了代接角色（表示该角色抢过电话单独发言）
+        if ((!text && !activeSpeakerCharId) || callState !== "IDLE") return;
         if (sttRef.current) {
             sttRef.current.abort();
             sttRef.current = null;
         }
         setTypedText("");
-        runConversationTurn(text);
-    }, [typedText, callState, runConversationTurn]);
+        runConversationTurn(text, activeSpeakerCharId);
+    }, [typedText, callState, activeSpeakerCharId, runConversationTurn]);
 
     // 按住说话（非 iOS）：按下录音，松开转写后走对话轮
     const holdInput = useHoldToTalk({
@@ -571,9 +635,27 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         });
         messagesRef.current = [...messagesRef.current, endMsg];
 
+        // 跨角色记忆同步：若有代接角色参与通话，自动写入参与角色的长期记忆
+        if (selectedProxyChars.length > 0) {
+            const summary = `【修罗场/代接电话记录】用户与${character.name}通电话，${selectedProxyChars.map(c => c.name).join("、")}在场代接并参与了通话。通话时长 ${formatTime(callDuration)}。`;
+            const now = new Date().toISOString();
+            selectedProxyChars.forEach(proxyChar => {
+                saveMemoryEntry({
+                    id: `mem_proxy_call_${Date.now()}_${proxyChar.id}`,
+                    characterId: proxyChar.id,
+                    sourceApp: "chat",
+                    type: "long_term",
+                    content: summary,
+                    importance: 0.85,
+                    createdAt: now,
+                    updatedAt: now,
+                }).catch(err => console.warn("[VoiceCall] Save proxy memory failed:", err));
+            });
+        }
+
         // Delay then close
         setTimeout(() => onEnd(), 1500);
-    }, [session.id, callDuration, onEnd]);
+    }, [session.id, callDuration, onEnd, selectedProxyChars, character.name]);
 
     // ── Render ──────────────────────────────────────
 
@@ -674,6 +756,51 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                     )}
                 </div>
 
+                {/* 选中的代接角色水平滚动席位栏（图二，在输入框上方） */}
+                {selectedProxyChars.length > 0 && callState !== "CONNECTING" && callState !== "ENDED" && (
+                    <div className="px-5 py-2 flex items-center gap-4 overflow-x-auto flex-none" style={{ scrollbarWidth: "none" }}>
+                        {selectedProxyChars.map((proxyChar) => {
+                            const isSpeakingActive = activeSpeakerCharId === proxyChar.id;
+                            return (
+                                <div
+                                    key={proxyChar.id}
+                                    onClick={() => {
+                                        setActiveSpeakerCharId(prev => prev === proxyChar.id ? null : proxyChar.id);
+                                    }}
+                                    className="flex flex-col items-center gap-1 cursor-pointer flex-shrink-0"
+                                >
+                                    <div
+                                        className={`w-12 h-12 rounded-full overflow-hidden p-0.5 border-2 transition-all ${
+                                            isSpeakingActive
+                                                ? "border-green-500 scale-105 shadow-[0_0_12px_rgba(34,197,94,0.4)]"
+                                                : "border-transparent"
+                                        }`}
+                                    >
+                                        {proxyChar.avatar ? (
+                                            <img
+                                                src={proxyChar.avatar}
+                                                alt={proxyChar.name}
+                                                className="w-full h-full rounded-full object-cover"
+                                            />
+                                        ) : (
+                                            <div className="w-full h-full rounded-full bg-white/20 flex items-center justify-center text-xs">
+                                                {proxyChar.name?.[0] || "?"}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <span
+                                        className={`text-xs transition-colors ${
+                                            isSpeakingActive ? "text-green-400 font-semibold" : "text-white/70"
+                                        }`}
+                                    >
+                                        {proxyChar.name}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
                 {inputMode === "text" && callState !== "CONNECTING" && callState !== "ENDED" && (
                     <form
                         className="call-text-input-panel voicecall-text-input-panel"
@@ -687,13 +814,17 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                                 value={typedText}
                                 onChange={e => setTypedText(e.target.value)}
                                 className="call-text-input"
-                                placeholder={callState === "IDLE" ? "输入你想说的话..." : "稍等对方说完..."}
+                                placeholder={
+                                    activeSpeakerCharId
+                                        ? `选了${selectedProxyChars.find(c => c.id === activeSpeakerCharId)?.name}：空发代答，输入则一同发言`
+                                        : (callState === "IDLE" ? "输入你想说的话..." : "稍等对方说完...")
+                                }
                                 disabled={callState !== "IDLE"}
                             />
                             <button
                                 type="submit"
                                 className="call-text-send-btn"
-                                disabled={!typedText.trim() || callState !== "IDLE"}
+                                disabled={(!typedText.trim() && !activeSpeakerCharId) || callState !== "IDLE"}
                                 aria-label="发送"
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
@@ -849,7 +980,33 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                         </>
                     ) : callState === "CONNECTING" && initiator === "character" ? (
                         /* Incoming call: accept + decline */
-                        <>
+                        <div className="relative flex items-center gap-[40px]">
+                            {/* 接听按钮上方弹出：直接 / 代接选择气泡（图一） */}
+                            {showAnswerOptions && (
+                                <div className="absolute bottom-[75px] right-0 flex flex-col gap-2.5 bg-[#1a2233]/95 backdrop-blur-md p-2 rounded-2xl border border-white/15 shadow-2xl z-50 min-w-[100px] animate-in fade-in zoom-in-95 duration-150">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowAnswerOptions(false);
+                                            setCallState("IDLE");
+                                        }}
+                                        className="w-full px-4 py-2 text-center rounded-xl bg-white/10 hover:bg-white/15 active:bg-white/20 text-sm font-medium text-white transition-colors"
+                                    >
+                                        直接
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowAnswerOptions(false);
+                                            setShowProxyModal(true);
+                                        }}
+                                        className="w-full px-4 py-2 text-center rounded-xl bg-green-600/90 hover:bg-green-600 active:bg-green-700 text-sm font-medium text-white transition-colors shadow-sm"
+                                    >
+                                        代接
+                                    </button>
+                                </div>
+                            )}
+
                             <button
                                 onClick={() => {
                                     pushChatMessage({
@@ -867,7 +1024,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                                 </svg>
                             </button>
                             <button
-                                onClick={() => setCallState("IDLE")}
+                                onClick={() => setShowAnswerOptions(prev => !prev)}
                                 className="ui-call-btn ui-call-btn-success"
                             >
                                 {/* Phone pick-up icon */}
@@ -875,7 +1032,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                                     <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
                                 </svg>
                             </button>
-                        </>
+                        </div>
                     ) : callState === "CONNECTING" ? (
                         /* User-initiated: show cancel only */
                         <button
@@ -906,6 +1063,107 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
                     onClose={() => setShowSttWarning(false)}
                     onNeverShow={handleNeverShowSttWarning}
                 />
+            )}
+
+            {/* 代接中心选择弹窗（四部分布局） */}
+            {showProxyModal && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-200">
+                    <div className="w-full max-w-[340px] bg-[#161c28] rounded-[28px] p-5 border border-white/10 shadow-2xl flex flex-col max-h-[85vh]">
+                        {/* 第一部分：纯文本「选择」 */}
+                        <div className="text-center font-medium text-base text-white/90 select-none pb-3">
+                            选择
+                        </div>
+
+                        {/* 第二部分：长方形胶囊搜索栏 */}
+                        <div className="pb-3 flex-none">
+                            <input
+                                type="text"
+                                value={proxySearchText}
+                                onChange={e => setProxySearchText(e.target.value)}
+                                placeholder="搜索角色名..."
+                                className="w-full h-10 px-4 rounded-full bg-white/5 border border-white/10 text-sm text-white placeholder-white/40 focus:outline-none focus:border-green-500/50 transition-colors"
+                            />
+                        </div>
+
+                        {/* 第三部分：同世界其他角色列表（上下滚动） */}
+                        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 py-1 pr-1" style={{ scrollbarWidth: "none" }}>
+                            {filteredCandidates.length === 0 ? (
+                                <div className="text-center text-xs text-white/40 py-8">
+                                    暂无同一世界书下的其他角色
+                                </div>
+                            ) : (
+                                filteredCandidates.map((charItem) => {
+                                    const isSelected = selectedProxyChars.some(c => c.id === charItem.id);
+                                    return (
+                                        <div
+                                            key={charItem.id}
+                                            onClick={() => {
+                                                setSelectedProxyChars(prev =>
+                                                    isSelected
+                                                        ? prev.filter(c => c.id !== charItem.id)
+                                                        : [...prev, charItem]
+                                                );
+                                            }}
+                                            className={`flex items-center justify-between p-2.5 rounded-2xl cursor-pointer transition-colors ${
+                                                isSelected
+                                                    ? "bg-white/20 text-white"
+                                                    : "bg-white/5 text-white/80 hover:bg-white/10"
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                {charItem.avatar ? (
+                                                    <img
+                                                        src={charItem.avatar}
+                                                        alt={charItem.name}
+                                                        className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                                                    />
+                                                ) : (
+                                                    <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-xs text-white/70 flex-shrink-0">
+                                                        {charItem.name?.[0] || "?"}
+                                                    </div>
+                                                )}
+                                                <span className="text-sm font-medium truncate">
+                                                    {charItem.name}
+                                                </span>
+                                            </div>
+                                            <div
+                                                className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                                                    isSelected ? "border-green-500 bg-green-500" : "border-white/30"
+                                                }`}
+                                            >
+                                                {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        {/* 第四部分：取消与确定 */}
+                        <div className="flex items-center justify-between gap-3 pt-4 mt-2 border-t border-white/10 flex-none">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSelectedProxyChars([]);
+                                    setShowProxyModal(false);
+                                }}
+                                className="flex-1 py-2.5 rounded-full bg-white/5 hover:bg-white/10 text-white/70 text-sm font-medium transition-colors"
+                            >
+                                取消
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowProxyModal(false);
+                                    setCallState("IDLE"); // 跳转进电话通话页
+                                }}
+                                className="flex-1 py-2.5 rounded-full bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors shadow-sm"
+                            >
+                                确定
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
         </div>
